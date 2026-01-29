@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Pub-Sub System Simulator - Busy Server Mode
-Opens multiple terminal windows and simulates automated message traffic
+Pub-Sub System Simulator - Topic-Based Pub-Sub
+Opens 5 terminal windows and simulates topic-based message traffic
 """
 
 import subprocess
@@ -31,22 +31,35 @@ def open_terminal_with_command(title, command, position=None):
         print(f"  Error: {e}")
         return False
 
-def create_publisher_script(script_dir, publisher_id, num_messages=10, delay_range=(1, 3)):
+def create_publisher_script(script_dir, publisher_id, topic, num_messages=10, delay_range=(3, 6)):
     """
-    Creates a shell script that automatically sends messages from a publisher
+    Creates a shell script that automatically sends messages from a publisher on a specific topic
     """
-    messages = [
-        f"Product update from Publisher {publisher_id}",
-        f"Alert: System status from Publisher {publisher_id}",
-        f"News: Breaking update #{publisher_id}",
-        f"Notification: User activity detected by Publisher {publisher_id}",
-        f"Update: Metrics report from Publisher {publisher_id}",
-        f"Info: Service health check from Publisher {publisher_id}",
-        f"Data: Analytics from Publisher {publisher_id}",
-        f"Event: New transaction logged by Publisher {publisher_id}",
-        f"Status: All systems operational - Publisher {publisher_id}",
-        f"Message: Broadcast #{publisher_id} to all subscribers"
-    ]
+    topic_messages = {
+        "sports": [
+            f"Goal scored in the match!",
+            f"NBA Finals update",
+            f"Tennis championship result",
+            f"Baseball game highlights",
+            f"NFL touchdown alert"
+        ],
+        "news": [
+            f"Breaking: Major announcement",
+            f"World news update",
+            f"Business market trends",
+            f"Science breakthrough",
+            f"Entertainment news"
+        ],
+        "weather": [
+            f"Sunny day ahead",
+            f"Rain expected tonight",
+            f"Snow warning issued",
+            f"Temperature rising",
+            f"Storm approaching"
+        ]
+    }
+    
+    messages = topic_messages.get(topic, [f"Update from {topic} topic"])
     
     script_content = f"""#!/bin/bash
 cd {script_dir}
@@ -56,7 +69,7 @@ send_messages() {{
     sleep 3  # Wait for connection
     
     for i in {{1..{num_messages}}}; do
-        MESSAGE="{messages[publisher_id % len(messages)]}"
+        MESSAGE="{random.choice(messages)}"
         echo "$MESSAGE"
         sleep {random.uniform(delay_range[0], delay_range[1]):.1f}
     done
@@ -65,10 +78,10 @@ send_messages() {{
 }}
 
 # Connect and start sending
-send_messages | ./my_client_app 127.0.0.1 8080 PUBLISHER
+send_messages | ./my_client_app 127.0.0.1 8080 PUBLISHER {topic}
 """
     
-    script_path = f"{script_dir}/publisher_{publisher_id}_auto.sh"
+    script_path = f"{script_dir}/publisher_{topic}_{publisher_id}_auto.sh"
     with open(script_path, 'w') as f:
         f.write(script_content)
     
@@ -77,14 +90,14 @@ send_messages | ./my_client_app 127.0.0.1 8080 PUBLISHER
 
 def main():
     print("=" * 70)
-    print("Pub-Sub System Simulator - BUSY SERVER MODE")
+    print("Pub-Sub System Simulator - TOPIC-BASED MESSAGING")
     print("=" * 70)
-    print("\nThis script will simulate a busy server with:")
+    print("\nThis script will simulate a topic-based pub-sub system with:")
     print("  - 1 Server")
-    print("  - 3 Subscribers (receiving messages)")
-    print("  - 5 Publishers (auto-sending messages)")
-    print("\nPublishers will automatically send messages every 1-3 seconds")
-    print("to simulate real-world traffic.")
+    print("  - 2 Publishers (sports, news)")
+    print("  - 2 Subscribers (sports, news)")
+    print("\nPublishers will send messages every 3-6 seconds on their topics")
+    print("Subscribers will only receive messages from their subscribed topics")
     print("=" * 70)
     
     # Get the directory where this script is located
@@ -92,70 +105,75 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Configuration
-    num_publishers = 5
-    num_subscribers = 3
     messages_per_publisher = 15
     
     # Confirm with user
     print(f"\nConfiguration:")
-    print(f"  Publishers: {num_publishers}")
-    print(f"  Subscribers: {num_subscribers}")
+    print(f"  Publishers: 2 (sports, news)")
+    print(f"  Subscribers: 2 (sports, news)")
     print(f"  Messages per publisher: {messages_per_publisher}")
-    print(f"  Estimated runtime: ~30-45 seconds")
+    print(f"  Message delay: 3-6 seconds")
+    print(f"  Estimated runtime: ~1.5 minutes")
     
     response = input("\nReady to start simulation? (y/n): ")
     if response.lower() != 'y':
         print("Cancelled.")
         return
     
-    print("\nStarting busy server simulation...\n")
+    print("\nStarting topic-based simulation...\n")
     
     # 1. Start Server
     print("Step 1: Starting server...")
     server_cmd = f"cd {script_dir} && ./my_server_app 8080"
-    open_terminal_with_command("🖥️  Server - Port 8080", server_cmd)
+    open_terminal_with_command("Server - Port 8080", server_cmd)
     time.sleep(2)
     
-    # 2. Start Subscribers
-    print(f"\nStep 2: Starting {num_subscribers} subscribers...")
-    for i in range(num_subscribers):
-        sub_cmd = f"cd {script_dir} && ./my_client_app 127.0.0.1 8080 SUBSCRIBER"
-        open_terminal_with_command(f"📥 Subscriber {i+1}", sub_cmd)
-        time.sleep(0.5)
+    # 2. Start Subscribers on matching topics
+    print(f"\nStep 2: Starting subscribers...")
+    subscriber_topics = ["sports", "news"]
+    for i, topic in enumerate(subscriber_topics):
+        sub_cmd = f"cd {script_dir} && ./my_client_app 127.0.0.1 8080 SUBSCRIBER {topic}"
+        open_terminal_with_command(f"Subscriber - {topic.upper()}", sub_cmd)
+        time.sleep(1)
     
-    # 3. Create and start Publishers
+    # 3. Create and start Publishers on different topics
     print(f"\nStep 3: Creating automated publishers...")
+    publisher_topics = ["sports", "news"]
     publisher_scripts = []
-    for i in range(num_publishers):
+    
+    for i, topic in enumerate(publisher_topics):
         script_path = create_publisher_script(
             script_dir, 
             i, 
+            topic,
             num_messages=messages_per_publisher,
-            delay_range=(1, 3)
+            delay_range=(3, 6)
         )
         publisher_scripts.append(script_path)
-        print(f"  ✓ Created publisher script {i+1}")
+        print(f"  ✓ Created {topic} publisher script")
     
     time.sleep(1)
     
-    print(f"\nStep 4: Starting {num_publishers} automated publishers...")
-    for i, script_path in enumerate(publisher_scripts):
+    print(f"\nStep 4: Starting automated publishers...")
+    for i, (script_path, topic) in enumerate(zip(publisher_scripts, publisher_topics)):
         pub_cmd = f"cd {script_dir} && {script_path}"
-        open_terminal_with_command(f"📤 Publisher {i+1} (Auto)", pub_cmd)
-        time.sleep(0.5)
+        open_terminal_with_command(f"Publisher - {topic.upper()} (Auto)", pub_cmd)
+        time.sleep(1)
     
     print("\n" + "=" * 70)
-    print("✓ Busy server simulation started!")
+    print("✓ Topic-based simulation started!")
     print("=" * 70)
     print("\nWhat's happening:")
-    print("  • 5 publishers are automatically sending messages")
-    print("  • 3 subscribers are receiving all published messages")
-    print("  • Messages are sent every 1-3 seconds")
-    print("  • Each publisher will send 15 messages then disconnect")
+    print("  • Sports Publisher → sends to Sports Subscriber only")
+    print("  • News Publisher → sends to News Subscriber only")
+    print("  • Messages are isolated by topic (sports/news)")
+    print("  • Messages sent every 3-6 seconds")
+    print("  • Each publisher sends 15 messages then disconnects")
     print("\nServer window commands:")
-    print("  • Type 'show_users' to see all active clients")
+    print("  • Type 'show_users' to see all active clients and their topics")
+    print("  • Type 'show_topics' to see all active topics")
     print("  • Type 'help' for more commands")
-    print("\nThe simulation will run for ~30-45 seconds")
+    print("\nThe simulation will run for ~1.5 minutes")
     print("\nTo manually stop everything:")
     print("  pkill -f my_server_app && pkill -f my_client_app")
     print("=" * 70)

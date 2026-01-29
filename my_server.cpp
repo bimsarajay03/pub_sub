@@ -6,18 +6,24 @@
 #include <unistd.h>
 #include <pthread.h>
 
+struct TOPICS{
+    int topicID;
+    std::string topicName;
+};
 
-//client table[user_id][type 0:publisher | 1:subscriber]
-int CLIENT_TABLE[100][1];
+
+//client table[user_id][type 0:publisher | 1:subscriber][topic_id]
+int CLIENT_TABLE[100][2];
 int CLIENT_ACTIVE[100];  // Track active clients: 1=active, 0=empty
 int CLIENT_SOCKETS[100];  // Store socket file descriptors for each client
+TOPICS TOPIC_TABLE[100]; //store conversation topics
+int TOPIC_COUNT = 0;  // Track number of topics
 
-//subscriber table
-int SUBS_TABLE[300][1];
 
 // Global mutex for protecting shared resources
 pthread_mutex_t coutMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t clientTableMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t topicTableMutex = PTHREAD_MUTEX_INITIALIZER;
 
 class Client{
     public:
@@ -25,13 +31,50 @@ class Client{
     int clientNum;
 };
 
-// Function to broadcast message to all subscribers
+// Function to find or create a topic in TOPIC_TABLE
+int getOrCreateTopicId(const std::string& topicName) {
+    pthread_mutex_lock(&topicTableMutex);
+    
+    // Search for existing topic
+    for (int i = 0; i < TOPIC_COUNT; i++) {
+        if (TOPIC_TABLE[i].topicName == topicName) {
+            pthread_mutex_unlock(&topicTableMutex);
+            return TOPIC_TABLE[i].topicID;
+        }
+    }
+    
+    // Create new topic if not found
+    if (TOPIC_COUNT < 100) {
+        int newTopicId = TOPIC_COUNT;
+        TOPIC_TABLE[newTopicId].topicID = newTopicId;
+        TOPIC_TABLE[newTopicId].topicName = topicName;
+        TOPIC_COUNT++;
+        
+        pthread_mutex_lock(&coutMutex);
+        std::cout << "New topic created: '" << topicName << "' (ID: " << newTopicId << ")" << std::endl;
+        pthread_mutex_unlock(&coutMutex);
+        
+        pthread_mutex_unlock(&topicTableMutex);
+        return newTopicId;
+    }
+    
+    pthread_mutex_unlock(&topicTableMutex);
+    return -1;  // Topic table full
+}
+
+// Function to broadcast message to all subscribers ON THE SAME TOPIC
 void broadcastToSubscribers(int publisherId, const std::string& message) {
     pthread_mutex_lock(&clientTableMutex);
     
+    // Get publisher's topic
+    int publisherTopicId = CLIENT_TABLE[publisherId][1];
+    
     for (int i = 0; i < 100; i++) {
-        // Send to active subscribers only
-        if (CLIENT_ACTIVE[i] == 1 && CLIENT_TABLE[i][0] == 1) {
+        // Send to active subscribers on the SAME topic only
+        if (CLIENT_ACTIVE[i] == 1 && 
+            CLIENT_TABLE[i][0] == 1 && 
+            CLIENT_TABLE[i][1] == publisherTopicId) {
+            
             std::string formattedMsg = "[Publisher #" + std::to_string(publisherId) + "]: " + message;
             send(CLIENT_SOCKETS[i], formattedMsg.c_str(), formattedMsg.size(), 0);
         }
@@ -57,7 +100,10 @@ void* handleServerCommands(void* arg) {
                 if (CLIENT_ACTIVE[i] == 1) {
                     hasActiveClients = true;
                     std::string type = (CLIENT_TABLE[i][0] == 0) ? "PUBLISHER" : "SUBSCRIBER";
-                    std::cout << "Client #" << i << " - " << type << std::endl;
+                    int topicId = CLIENT_TABLE[i][1];
+                    std::string topicName = (topicId >= 0 && topicId < TOPIC_COUNT) ? 
+                                           TOPIC_TABLE[topicId].topicName : "UNKNOWN";
+                    std::cout << "Client #" << i << " - " << type << " - Topic: " << topicName << std::endl;
                 }
             }
             if (!hasActiveClients) {
@@ -71,10 +117,29 @@ void* handleServerCommands(void* arg) {
         else if (command == "help") {
             pthread_mutex_lock(&coutMutex);
             std::cout << "\n========== SERVER COMMANDS ==========\n";
-            std::cout << "show_users - Display all active clients and their types\n";
-            std::cout << "help       - Show this help message\n";
+            std::cout << "show_users  - Display all active clients and their types\n";
+            std::cout << "show_topics - Display all active topics\n";
+            std::cout << "help        - Show this help message\n";
             std::cout << "=====================================\n\n";
             pthread_mutex_unlock(&coutMutex);
+        }
+        else if (command == "show_topics") {
+            pthread_mutex_lock(&topicTableMutex);
+            pthread_mutex_lock(&coutMutex);
+            
+            std::cout << "\n========== ACTIVE TOPICS ==========\n";
+            if (TOPIC_COUNT == 0) {
+                std::cout << "No topics created yet.\n";
+            } else {
+                for (int i = 0; i < TOPIC_COUNT; i++) {
+                    std::cout << "Topic ID " << TOPIC_TABLE[i].topicID << ": " 
+                             << TOPIC_TABLE[i].topicName << std::endl;
+                }
+            }
+            std::cout << "===================================\n\n";
+            
+            pthread_mutex_unlock(&coutMutex);
+            pthread_mutex_unlock(&topicTableMutex);
         }
         else if (!command.empty()) {
             pthread_mutex_lock(&coutMutex);
@@ -131,19 +196,47 @@ void* handleClient(void* arg){
         clientType += ch;
     }
     
+    //read topic - read the second line
+    std::string clientTopic = "";
+    while (read(clientSocket, &ch, 1) > 0) {
+        if (ch == '\n') break;  // Stop at newline
+        clientTopic += ch;
+    }
+    
+    // Get or create topic ID
+    int topicId = getOrCreateTopicId(clientTopic);
+    if (topicId == -1) {
+        pthread_mutex_lock(&coutMutex);
+        std::cout << "Client #" << clientId << " rejected - topic table full!" << std::endl;
+        pthread_mutex_unlock(&coutMutex);
+        
+        pthread_mutex_lock(&clientTableMutex);
+        CLIENT_ACTIVE[clientId] = 0;
+        pthread_mutex_unlock(&clientTableMutex);
+        
+        close(clientSocket);
+        delete client;
+        pthread_exit(NULL);
+        return NULL;
+    }
+    
     if (!clientType.empty()) {
         pthread_mutex_lock(&clientTableMutex);
         if (clientType == "PUBLISHER") {
             CLIENT_TABLE[clientId][0] = 0;
+            CLIENT_TABLE[clientId][1] = topicId;  // Store topic ID
             CLIENT_SOCKETS[clientId] = clientSocket;  // Store socket
             pthread_mutex_lock(&coutMutex);
-            std::cout << "Client #" << clientId << " registered as PUBLISHER" << std::endl;
+            std::cout << "Client #" << clientId << " registered as PUBLISHER on topic '" 
+                     << clientTopic << "'" << std::endl;
             pthread_mutex_unlock(&coutMutex);
         } else if (clientType == "SUBSCRIBER") {
             CLIENT_TABLE[clientId][0] = 1;
+            CLIENT_TABLE[clientId][1] = topicId;  // Store topic ID
             CLIENT_SOCKETS[clientId] = clientSocket;  // Store socket
             pthread_mutex_lock(&coutMutex);
-            std::cout << "Client #" << clientId << " registered as SUBSCRIBER" << std::endl;
+            std::cout << "Client #" << clientId << " registered as SUBSCRIBER on topic '" 
+                     << clientTopic << "'" << std::endl;
             pthread_mutex_unlock(&coutMutex);
         } else {
             pthread_mutex_lock(&coutMutex);
@@ -207,6 +300,7 @@ void* handleClient(void* arg){
     pthread_mutex_lock(&clientTableMutex);
     CLIENT_ACTIVE[clientNum] = 0;  // Mark as empty
     CLIENT_TABLE[clientNum][0] = -1;  // Clear type
+    CLIENT_TABLE[clientNum][1] = -1;  // Clear topic ID
     CLIENT_SOCKETS[clientNum] = -1;  // Clear socket
     pthread_mutex_unlock(&clientTableMutex);
     
@@ -296,6 +390,7 @@ int main(int argc, char* argv[]) {
     // Cleanup mutex before exit
     pthread_mutex_destroy(&coutMutex);
     pthread_mutex_destroy(&clientTableMutex);
+    pthread_mutex_destroy(&topicTableMutex);
     close(serverSocket);
     return 0;
 }

@@ -39,14 +39,15 @@ void* receiveMessages(void* arg) {
 
 int main(int argc, char* argv[]) {
     
-    if (argc != 4){
-        std::cerr << "Usage: " << argv[0] << " <server_ip> <port>" << std::endl;
+    if (argc != 5){
+        std::cerr << "Usage: " << argv[0] << " <server_ip> <port> <type> <topic>" << std::endl;
         return 1;
     }
 
     const char* serverIP = argv[1];
     int port = std::atoi(argv[2]);
-    std::string  userMode = argv[3]; 
+    std::string  userMode = argv[3];
+    std::string userTopic = argv[4]; 
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -69,6 +70,10 @@ int main(int argc, char* argv[]) {
     //send usermode
     std::string modeMsg = userMode + "\n";
     send(sock, modeMsg.c_str(), modeMsg.size(), 0);
+
+    //send topic
+    std::string topicMsg = userTopic + "\n";
+    send(sock, topicMsg.c_str(), topicMsg.size(), 0);
 
     // Create thread to receive messages from server
     SocketInfo* sockInfo = new SocketInfo;
